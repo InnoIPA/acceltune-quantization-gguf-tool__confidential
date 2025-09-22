@@ -34,7 +34,7 @@ jobs:
           echo "Validated version: ${{ github.event.inputs.version }}"
         id: get_version
   
-  build-quantization-gguf-tool:
+  build-quantization-service:
     runs-on: ubuntu-latest
     needs: validate-inputs
     env:

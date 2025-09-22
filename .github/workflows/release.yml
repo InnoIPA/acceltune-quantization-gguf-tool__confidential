@@ -1,0 +1,128 @@
+name: Release Quantization GGUF Tool
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  TOOL_NAME: "quantization-gguf-tool"
+  BRANCH: "release-updates"
+
+jobs:
+  validate-inputs:
+    runs-on: ubuntu-latest
+    outputs:
+      RELEASE_VERSION: ${{ steps.validate_version.outputs.VALIDATE_VERSION }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Get version from quantization-gguf-tool-version.toml
+        id: get_version
+        run: |
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Validate version with regex
+        id: validate_version
+        run: |
+          echo "Input version: ${{ steps.get_version.outputs.VERSION }}"
+          if [[ "${{ steps.get_version.outputs.VERSION }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version is valid"
+          else
+            echo "Invalid version format. Please use 'vX.Y.Z' format."
+            exit 1
+          fi
+
+          echo "VALIDATE_VERSION=${{ steps.get_version.outputs.VERSION }}" >> $GITHUB_OUTPUT
+          echo "Validated version: ${{ steps.get_version.outputs.VERSION }}"
+    
+  trigger-docker-build:
+    runs-on: ubuntu-latest
+    needs: validate-inputs
+    env:
+      RELEASE_VERSION: ${{ needs.validate-inputs.outputs.RELEASE_VERSION }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Trigger Docker Build Workflow
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: Build and Push Docker Image
+          token: ${{ secrets.PAT_TOKEN }}
+          inputs: |
+            {
+              "version": "${{ env.RELEASE_VERSION }}"
+            }
+
+  update-version:
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, trigger-docker-build]
+    env:
+      RELEASE_VERSION: ${{ needs.validate-inputs.outputs.RELEASE_VERSION }}
+    steps:
+      - name: Checkout AccelTune repository
+        uses: actions/checkout@v4
+        with:
+          repository: InnoIPA/AccelTune__confidential
+          path: AccelTune__confidential
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Check release-updates branch
+        run: |
+          cd AccelTune__confidential
+          git fetch origin
+          if git show-ref --verify --quiet refs/remotes/origin/"${{ env.BRANCH }}"; then
+            echo "Branch ${{ env.BRANCH }} exists"
+            git checkout -B "${{ env.BRANCH }}" origin/"${{ env.BRANCH }}"
+          else
+            echo "Branch ${{ env.BRANCH }} does not exist, creating from main"
+            git checkout -b "${{ env.BRANCH }}" origin/main
+          fi
+      
+      - name: Update version.toml
+        run: |
+          cd AccelTune__confidential
+          awk -v service="${{ env.TOOL_NAME }}" -v new_version="${{ env.RELEASE_VERSION }}" '
+            $0 ~ "\\[services."service"\\]" { in_service=1; print; next }
+            in_service && /^version =/ {
+              sub(/version = ".*"/, "version = \""new_version"\"");
+              in_service=0
+            }
+            { print }
+            ' version.toml > version.toml.tmp && mv version.toml.tmp version.toml
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          path: AccelTune__confidential
+          base: main
+          branch: "${{ env.BRANCH }}"
+          commit-message: "chore(${{ env.TOOL_NAME }}): bump version to ${{ env.RELEASE_VERSION }}"
+          title: "chore(${{ env.TOOL_NAME }}): bump version to ${{ env.RELEASE_VERSION }}"
+          body: |
+            This PR updates the version of ${{ env.TOOL_NAME }} to ${{ env.RELEASE_VERSION }}.
+            - Service: **${{ env.TOOL_NAME}}**
+            - Version: `${{ env.RELEASE_VERSION }}`
+          labels: "release"
+          draft: false
+
+  create-tag:
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, trigger-docker-build, update-version]
+    env:
+      RELEASE_VERSION: ${{ needs.validate-inputs.outputs.RELEASE_VERSION }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Create Git Tag
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git tag ${{ env.RELEASE_VERSION }}
+          git push origin ${{ env.RELEASE_VERSION }}

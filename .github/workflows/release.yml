@@ -19,10 +19,10 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Get version from quantization-gguf-tool-version.toml
+      - name: Get version from quantization-gguf-tool.toml
         id: get_version
         run: |
-          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('quantization-gguf-tool.toml', 'rb'))['project']['version'])")
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Validate version with regex

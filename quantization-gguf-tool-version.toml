@@ -1,0 +1,5 @@
+[project]
+name = "quantization-gguf-tool"
+version = "v0.1.0"
+description = "A quantization tool for AccelTune based on a fork of llama.cpp"
+readme = "README.md"
